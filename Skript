@@ -1,0 +1,60 @@
+Import-Module ActiveDirectory
+
+$csvFilePath = "C:\Users\Administrator\Downloads\kasutajad.csv"
+
+$ouMapping = @{
+    "Haldus" = "OU=Haldus,DC=oige,DC=ee"
+    "Myyk" = "OU=Myyk,DC=oige,DC=ee"
+    "Juhtkond" = "OU=Juhtkond,DC=oige,DC=ee"
+    "IT" = "OU=IT,DC=oige,DC=ee"
+    "Toimetajad" = "OU=Toimetajad,DC=oige,DC=ee"
+    "Personal" = "OU=Personal,DC=oige,DC=ee"
+
+}
+
+$users = Import-Csv -Path $csvFilePath -Delimiter "`t"
+
+foreach ($user in $users) {
+    $firstName = $user.Eesnimi
+    $lastName = $user.Perekonnanimi
+    $osakond = $user.Osakond
+    $samAccountName = $firstName + "." + $lastName  # Assuming samAccountName is in this format
+    $userPrincipalName = $samAccountName + "@oige.ee"
+    $displayName = "$firstName $lastName"
+    $password = "Passw0rd"  # Set a default password, ensure you set the policy to change on first login
+
+    # Check if the user already exists in AD
+    $adUser = Get-ADUser -Filter {SamAccountName -eq $samAccountName} -ErrorAction SilentlyContinue
+
+    if ($adUser) {
+        if ($osakond -and $ouMapping.ContainsKey($osakond)) {
+            $targetOU = $ouMapping[$osakond]
+            $currentDN = $adUser.DistinguishedName
+
+            Move-ADObject -Identity $currentDN -TargetPath $targetOU
+            Write-Host "Moved user $($adUser.SamAccountName) to $targetOU"
+        } else {
+            Write-Host "No OU mapping found for osakond $osakond for user $($adUser.SamAccountName)"
+        }
+    } else {
+        if ($osakond -and $ouMapping.ContainsKey($osakond)) {
+            $targetOU = $ouMapping[$osakond]
+            
+            New-ADUser `
+                -SamAccountName $samAccountName `
+                -UserPrincipalName $userPrincipalName `
+                -Name $displayName `
+                -GivenName $firstName `
+                -Surname $lastName `
+                -DisplayName $displayName `
+                -Path $targetOU `
+                -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
+                -Enabled $true `
+                -ChangePasswordAtLogon $true
+
+            Write-Host "Created and moved user $samAccountName to $targetOU"
+        } else {
+            Write-Host "No OU mapping found for osakond $osakond for new user $samAccountName"
+        }
+    }
+}
